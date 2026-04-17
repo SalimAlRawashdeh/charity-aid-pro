@@ -25,6 +25,14 @@ from openai import AzureOpenAI
 from . import config
 from .schema import ClassificationResult, FundingOpportunity, ParsedEmail
 
+try:
+    from scoring.models import OpportunityInput
+    from scoring.pipeline import _score_all
+    _SCORING_OK = True
+except Exception as _scoring_import_err:  # pragma: no cover
+    logging.warning("Scoring module import failed — scoring will be skipped. Error: %s", _scoring_import_err)
+    _SCORING_OK = False
+
 logger = logging.getLogger(__name__)
 
 # ── Prompt loading (cached) ────────────────────────────────────────────────────
@@ -433,6 +441,36 @@ def parse_email(email_data: dict[str, Any]) -> ParsedEmail:
     else:
         logger.info("Email %s classified as %s — skipping extraction", email_id,
                     classification_result.classification)
+
+    # ── Step 3: Score extracted opportunities ─────────────────────────────────
+    if opportunities and _SCORING_OK:
+        import asyncio
+        try:
+            inputs = [OpportunityInput(**opp.model_dump()) for opp in opportunities]
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop and loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    scored_list = pool.submit(asyncio.run, _score_all(inputs)).result()
+            else:
+                scored_list = asyncio.run(_score_all(inputs))
+
+            for opp, scored in zip(opportunities, scored_list):
+                opp.gating = scored.gating
+                opp.scores = scored.scores
+                opp.timing = scored.timing
+                opp.final_score = scored.final_score
+                opp.score = scored.final_score if scored.final_score is not None else opp.score
+                opp.suggested_tags = scored.suggested_tags
+                opp.scored_at = scored.scored_at
+                opp.tags = list(set(opp.tags + scored.suggested_tags))
+            logger.info("Scored %d opportunity/opportunities for email %s", len(opportunities), email_id)
+        except Exception as scoring_exc:  # noqa: BLE001
+            logger.warning("Scoring failed for email %s — continuing without scores: %s", email_id, scoring_exc)
 
     return ParsedEmail(
         emailId=email_id,

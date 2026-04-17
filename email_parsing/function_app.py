@@ -5,6 +5,7 @@ Functions defined here:
   - poll_emails      : Timer trigger, every 15 minutes
   - scan_now         : HTTP POST /api/scan  (auth: FUNCTION)
   - get_opportunities: HTTP GET  /api/opportunities (auth: ANONYMOUS)
+  - score_opportunities: HTTP POST /api/score (auth: FUNCTION)
 """
 
 import logging
@@ -27,6 +28,14 @@ except Exception as _import_err:  # pragma: no cover
         _import_err,
     )
     _IMPORTS_OK = False
+
+try:
+    from scoring.models import OpportunityInput
+    from scoring.pipeline import run_scoring_pipeline
+    _SCORING_OK = True
+except Exception as _scoring_import_err:  # pragma: no cover
+    logging.warning("Scoring module import failed — /api/score will be unavailable. Error: %s", _scoring_import_err)
+    _SCORING_OK = False
 
 logger = logging.getLogger(__name__)
 
@@ -371,5 +380,58 @@ def retry_dead_letter(req: func.HttpRequest) -> func.HttpResponse:
                 "message": "Retry failed — email remains in dead-letters for further review.",
             }),
             status_code=422,
+            mimetype="application/json",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Function 6: HTTP POST /api/score — ad-hoc scoring endpoint
+# ---------------------------------------------------------------------------
+
+@app.route(route="score", methods=["POST"], auth_level=func.AuthLevel.FUNCTION)
+def score_opportunities(req: func.HttpRequest) -> func.HttpResponse:
+    """Score a list of opportunity objects on demand."""
+    logger.info("score_opportunities: request received.")
+
+    if not _SCORING_OK:
+        return func.HttpResponse(
+            body=json.dumps({"error": "Scoring module unavailable."}),
+            status_code=503,
+            mimetype="application/json",
+        )
+
+    try:
+        body = req.get_json()
+    except Exception:
+        return func.HttpResponse(
+            body=json.dumps({"error": "Invalid JSON body"}),
+            status_code=400,
+            mimetype="application/json",
+        )
+
+    if not isinstance(body, list):
+        body = [body]
+
+    try:
+        inputs = [OpportunityInput(**item) for item in body]
+    except Exception as exc:
+        return func.HttpResponse(
+            body=json.dumps({"error": "Invalid opportunity data", "detail": str(exc)}),
+            status_code=422,
+            mimetype="application/json",
+        )
+
+    try:
+        scored = run_scoring_pipeline(inputs)
+        return func.HttpResponse(
+            body=json.dumps([s.model_dump() for s in scored], default=str),
+            status_code=200,
+            mimetype="application/json",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("score_opportunities: unexpected error — %s", exc, exc_info=True)
+        return func.HttpResponse(
+            body=json.dumps({"error": "Scoring failed", "detail": str(exc)}),
+            status_code=500,
             mimetype="application/json",
         )

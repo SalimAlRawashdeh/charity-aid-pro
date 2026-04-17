@@ -6,7 +6,7 @@ and the supporting types produced by the email-parsing pipeline.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -81,6 +81,14 @@ class FundingOpportunity(BaseModel):
         le=1.0,
         description="LLM confidence in the extracted data (0–1)",
     )
+
+    # Scoring fields (populated after scoring pipeline)
+    gating: Any | None = Field(default=None, description="Gating check results")
+    scores: Any | None = Field(default=None, description="Scoring dimension results")
+    timing: Any | None = Field(default=None, description="Timing score and days to deadline")
+    final_score: float | None = Field(default=None, description="Pipeline-computed score (0–100)")
+    suggested_tags: list[str] = Field(default_factory=list, description="Tags suggested by scoring pipeline")
+    scored_at: datetime | None = Field(default=None, description="When scoring ran (UTC)")
 
 
 class ClassificationResult(BaseModel):
