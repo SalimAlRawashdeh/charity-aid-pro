@@ -1,328 +1,135 @@
 """
-Cosmos DB NoSQL API storage layer.
+Supabase (Postgres) storage layer.
 
-Responsibilities
-----------------
-- Lazy-initialise the database and containers on first use
-- De-duplicate emails via emailId before processing
-- Upsert fully parsed emails as Cosmos documents
-- Query opportunities with optional type / status / funderName filters
-- Store unprocessable emails in a separate dead-letters container
+Single table: opportunities. See supabase/migrations/.
+Re-runs of the pipeline are safe: opportunities are upserted on `id`.
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import Any
 
-from azure.cosmos import CosmosClient, PartitionKey, exceptions as cosmos_exc
+from supabase import Client, create_client
 
 from . import config
-from .schema import ParsedEmail
+from .schema import FundingOpportunity, ParsedEmail
 
 logger = logging.getLogger(__name__)
 
-# ── Internal state ────────────────────────────────────────────────────────────
 
-_cosmos_client: CosmosClient | None = None
-_container_cache: dict[str, Any] = {}
+# ── Client ───────────────────────────────────────────────────────────────────
 
-_DEAD_LETTERS_CONTAINER = "dead-letters"
+_client: Client | None = None
 
 
-# ── Client / container initialisation ────────────────────────────────────────
+def _get_client() -> Client:
+    global _client
+    if _client is None:
+        if not config.SUPABASE_URL or not config.SUPABASE_KEY:
+            raise RuntimeError(
+                "SUPABASE_URL / SUPABASE_KEY are not set. "
+                "Populate them in local.settings.json or the function app config."
+            )
+        _client = create_client(config.SUPABASE_URL, config.SUPABASE_KEY)
+        logger.debug("Supabase client initialised (url=%s)", config.SUPABASE_URL)
+    return _client
 
 
-def _get_client() -> CosmosClient:
-    global _cosmos_client
-    if _cosmos_client is None:
-        _cosmos_client = CosmosClient(
-            url=config.COSMOS_ENDPOINT,
-            credential=config.COSMOS_KEY,
-        )
-        logger.debug("Cosmos DB client initialised (endpoint=%s)", config.COSMOS_ENDPOINT)
-    return _cosmos_client
+# ── Field mapping (camelCase ↔ snake_case) ───────────────────────────────────
+
+_OPP_FIELD_MAP: dict[str, str] = {
+    "id": "id",
+    "funderName": "funder_name",
+    "programName": "program_name",
+    "amount": "amount",
+    "amountMax": "amount_max",
+    "type": "type",
+    "deadline": "deadline",
+    "location": "location",
+    "duration": "duration",
+    "durationMonths": "duration_months",
+    "status": "status",
+    "score": "score",
+    "tags": "tags",
+    "description": "description",
+    "eligibility": "eligibility",
+    "notes": "notes",
+    "website": "website",
+    "contactName": "contact_name",
+    "contactEmail": "contact_email",
+    "source": "source",
+    "extractionConfidence": "extraction_confidence",
+    "gating": "gating",
+    "scores": "scores",
+    "timing": "timing",
+    "final_score": "final_score",
+    "suggested_tags": "suggested_tags",
+    "scored_at": "scored_at",
+}
+
+_OPP_FIELD_MAP_REVERSE = {v: k for k, v in _OPP_FIELD_MAP.items()}
 
 
-def _ensure_container(container_name: str, partition_key_path: str = "/emailId") -> Any:
-    """
-    Return a ContainerProxy, creating the database and container if they do
-    not yet exist (idempotent — safe to call on every cold start).
-    """
-    if container_name in _container_cache:
-        return _container_cache[container_name]
-
-    client = _get_client()
-
-    database = client.create_database_if_not_exists(id=config.COSMOS_DATABASE)
-    logger.debug("Using database '%s'", config.COSMOS_DATABASE)
-
-    container = database.create_container_if_not_exists(
-        id=container_name,
-        partition_key=PartitionKey(path=partition_key_path),
-        offer_throughput=None,  # serverless / free tier — no manual RU provisioning
-    )
-    logger.debug("Using container '%s' in database '%s'", container_name, config.COSMOS_DATABASE)
-
-    _container_cache[container_name] = container
-    return container
+def _opp_to_row(opp: FundingOpportunity) -> dict[str, Any]:
+    src = opp.model_dump(mode="json")
+    return {db_col: src[py_field] for py_field, db_col in _OPP_FIELD_MAP.items() if py_field in src}
 
 
-def get_container():
-    """
-    Return the primary opportunities container, creating it if necessary.
-    Partition key: /emailId
-    """
-    return _ensure_container(config.COSMOS_CONTAINER, "/emailId")
+def _row_to_opp(row: dict[str, Any]) -> dict[str, Any]:
+    return {_OPP_FIELD_MAP_REVERSE.get(k, k): v for k, v in row.items()}
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
-def email_already_processed(email_id: str) -> bool:
-    """
-    Return True if a document with the given emailId already exists in Cosmos.
-
-    Uses a point-read (cheap) rather than a cross-partition query.
-    """
-    container = get_container()
-    try:
-        container.read_item(item=email_id, partition_key=email_id)
-        logger.debug("Email %s already processed — skipping", email_id)
-        return True
-    except cosmos_exc.CosmosResourceNotFoundError:
-        return False
-    except Exception as exc:  # noqa: BLE001
-        logger.error("Error checking for email %s: %s", email_id, exc)
-        # Treat as unprocessed to avoid silently dropping emails
-        return False
-
-
 def store_parsed_email(parsed_email: ParsedEmail) -> None:
     """
-    Upsert a :class:`ParsedEmail` as a Cosmos document.
+    Upsert all opportunities from this email.
 
-    The Cosmos ``id`` field is set to ``emailId`` so that re-processing the
-    same email overwrites the previous result rather than creating a duplicate.
+    The LLM doesn't guarantee unique opportunity IDs (it sometimes returns
+    the same string twice within one email, or reuses an ID across emails),
+    so we override `id` with a deterministic `{emailId}#{index}`. This keeps
+    re-runs idempotent — same email + same number of opps → same IDs.
     """
-    container = get_container()
+    rows: list[dict[str, Any]] = []
+    for idx, opp in enumerate(parsed_email.opportunities):
+        row = _opp_to_row(opp)
+        row["id"] = f"{parsed_email.emailId}#{idx}"
+        rows.append(row)
 
-    # Cosmos requires a string ``id`` field at the top level
-    document = parsed_email.model_dump(mode="json")
-    document["id"] = parsed_email.emailId  # Cosmos document id == emailId
+    if not rows:
+        logger.info("No opportunities in email '%s' — nothing to store.", parsed_email.emailId)
+        return
 
-    container.upsert_item(document)
+    _get_client().table("opportunities").upsert(rows, on_conflict="id").execute()
     logger.info(
-        "Upserted parsed email '%s' with %d opportunity/opportunities",
+        "Stored email '%s' — %d opportunity/opportunities upserted.",
         parsed_email.emailId,
-        len(parsed_email.opportunities),
+        len(rows),
     )
 
 
 def get_opportunities(filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """
-    Return a list of opportunity dicts from all stored ParsedEmail documents.
+    Return opportunity dicts (camelCase keys) with optional filters.
 
-    Supported filter keys (all optional):
-        type        — exact match on FundingType string
-        status      — exact match on OpportunityStatus string
-        funderName  — case-insensitive substring match
-
-    Returns:
-        A flat list of opportunity dicts (each has all FundingOpportunity fields
-        plus ``emailId`` and ``emailSubject`` from the parent document).
+    Supported filter keys:
+        type        — exact match
+        status      — exact match
+        funderName  — case-insensitive substring
     """
-    container = get_container()
     filters = filters or {}
-
-    where_clauses: list[str] = []
-    params: list[dict[str, Any]] = []
+    q = _get_client().table("opportunities").select("*")
 
     if "type" in filters:
-        where_clauses.append("opp.type = @type")
-        params.append({"name": "@type", "value": filters["type"]})
-
+        q = q.eq("type", filters["type"])
     if "status" in filters:
-        where_clauses.append("opp.status = @status")
-        params.append({"name": "@status", "value": filters["status"]})
-
+        q = q.eq("status", filters["status"])
     if "funderName" in filters:
-        # CONTAINS is case-sensitive in Cosmos SQL; use LOWER for a simple
-        # case-insensitive substring search
-        where_clauses.append("CONTAINS(LOWER(opp.funderName), @funderName)")
-        params.append({"name": "@funderName", "value": filters["funderName"].lower()})
+        q = q.ilike("funder_name", f"%{filters['funderName']}%")
 
-    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
-
-    query = f"""
-        SELECT
-            c.emailId,
-            c.emailSubject,
-            opp.id,
-            opp.funderName,
-            opp.programName,
-            opp.amount,
-            opp.amountMax,
-            opp.type,
-            opp.deadline,
-            opp.location,
-            opp.duration,
-            opp.durationMonths,
-            opp.relationship,
-            opp.status,
-            opp.score,
-            opp.tags,
-            opp.description,
-            opp.eligibility,
-            opp.notes,
-            opp.website,
-            opp.contactName,
-            opp.contactEmail,
-            opp.source,
-            opp.extractionConfidence
-        FROM c
-        JOIN opp IN c.opportunities
-        {where_sql}
-    """
-
-    results = list(
-        container.query_items(
-            query=query,
-            parameters=params if params else None,
-            enable_cross_partition_query=True,
-        )
-    )
-    logger.info("get_opportunities returned %d result(s) with filters=%s", len(results), filters)
-    return results
-
-
-def store_dead_letter(
-    email_id: str,
-    error: str,
-    subject: str = "",
-    body: str = "",
-    email_data: dict[str, Any] | None = None,
-    failed_at: str = "",
-) -> None:
-    """
-    Persist a failed / unparseable email to the dead-letters container so it
-    can be reviewed and reprocessed manually.
-
-    Accepts either individual fields (subject, body) or the raw email_data dict
-    produced by :func:`email_client.fetch_unread_emails`.
-
-    Args:
-        email_id:   Graph API message ID.
-        error:      Exception or error message describing the failure.
-        subject:    Email subject line (used when email_data is not supplied).
-        body:       Plain-text email body, may be truncated (used when email_data is not supplied).
-        email_data: Raw email dict from the Graph API wrapper (takes priority over subject/body).
-        failed_at:  ISO 8601 timestamp of the failure; defaults to now (UTC).
-    """
-    container = _ensure_container(_DEAD_LETTERS_CONTAINER, "/emailId")
-
-    if email_data:
-        subject = email_data.get("subject", subject)
-        body = email_data.get("body", body)
-
-    document = {
-        "id": email_id,
-        "emailId": email_id,
-        "subject": subject,
-        "body": body[:4000],  # cap at 4 KB to avoid large Cosmos documents
-        "rawEmailData": email_data or {},  # preserve full original for retry
-        "error": str(error),
-        "failedAt": failed_at or datetime.now(timezone.utc).isoformat(),
-        "retryCount": 0,
-        "resolved": False,
-    }
-
-    container.upsert_item(document)
-    logger.warning("Stored dead-letter for email %s: %s", email_id, error)
-
-
-def get_dead_letters(include_resolved: bool = False) -> list[dict[str, Any]]:
-    """
-    Return all dead-letter documents, optionally including resolved ones.
-
-    Args:
-        include_resolved: If True, also return entries that were successfully
-                          retried. Defaults to False (only unresolved).
-
-    Returns:
-        List of dead-letter dicts ordered by failedAt descending.
-    """
-    container = _ensure_container(_DEAD_LETTERS_CONTAINER, "/emailId")
-
-    where = "" if include_resolved else "WHERE c.resolved = false"
-    query = f"""
-        SELECT
-            c.emailId,
-            c.subject,
-            c.error,
-            c.failedAt,
-            c.retryCount,
-            c.resolved,
-            c.resolvedAt,
-            c.body
-        FROM c
-        {where}
-        ORDER BY c.failedAt DESC
-    """
-
-    results = list(
-        container.query_items(query=query, enable_cross_partition_query=True)
-    )
-    logger.info(
-        "get_dead_letters returned %d result(s) (include_resolved=%s)",
-        len(results),
-        include_resolved,
-    )
-    return results
-
-
-def get_dead_letter(email_id: str) -> dict[str, Any] | None:
-    """
-    Retrieve a single dead-letter document by emailId.
-
-    Returns None if no document is found.
-    """
-    container = _ensure_container(_DEAD_LETTERS_CONTAINER, "/emailId")
-    try:
-        return container.read_item(item=email_id, partition_key=email_id)
-    except cosmos_exc.CosmosResourceNotFoundError:
-        return None
-
-
-def increment_dead_letter_retry(email_id: str, error: str) -> None:
-    """
-    Increment the retryCount and update the error message on a dead-letter
-    document after a failed retry attempt.
-    """
-    container = _ensure_container(_DEAD_LETTERS_CONTAINER, "/emailId")
-    doc = get_dead_letter(email_id)
-    if doc is None:
-        logger.warning("increment_dead_letter_retry: no document found for %s", email_id)
-        return
-
-    doc["retryCount"] = doc.get("retryCount", 0) + 1
-    doc["error"] = error
-    doc["lastRetryAt"] = datetime.now(timezone.utc).isoformat()
-    container.upsert_item(doc)
-
-
-def resolve_dead_letter(email_id: str) -> None:
-    """
-    Mark a dead-letter document as resolved after a successful retry.
-    """
-    container = _ensure_container(_DEAD_LETTERS_CONTAINER, "/emailId")
-    doc = get_dead_letter(email_id)
-    if doc is None:
-        logger.warning("resolve_dead_letter: no document found for %s", email_id)
-        return
-
-    doc["resolved"] = True
-    doc["resolvedAt"] = datetime.now(timezone.utc).isoformat()
-    container.upsert_item(doc)
-    logger.info("Dead-letter %s marked as resolved", email_id)
+    rows = (q.execute().data or [])
+    out = [_row_to_opp(r) for r in rows]
+    logger.info("get_opportunities returned %d row(s) (filters=%s)", len(out), filters)
+    return out

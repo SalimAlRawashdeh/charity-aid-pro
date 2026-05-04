@@ -108,50 +108,6 @@ def get_opportunities(
     return JSONResponse(serialisable)
 
 
-@app.get("/api/dead-letters")
-def list_dead_letters(include_resolved: bool = False):
-    if not _IMPORTS_OK:
-        raise HTTPException(503, "Pipeline not initialised")
-    return storage.get_dead_letters(include_resolved=include_resolved)
-
-
-@app.post("/api/dead-letters/{email_id}/retry")
-def retry_dead_letter(email_id: str):
-    if not _IMPORTS_OK:
-        raise HTTPException(503, "Pipeline not initialised")
-
-    dead_letter = storage.get_dead_letter(email_id)
-    if dead_letter is None:
-        raise HTTPException(404, f"No dead-letter found for emailId: {email_id}")
-
-    email_data: dict = dead_letter.get("rawEmailData") or {
-        "id": email_id,
-        "subject": dead_letter.get("subject", ""),
-        "body": dead_letter.get("body", ""),
-        "from": "",
-        "receivedDateTime": dead_letter.get("failedAt", ""),
-    }
-    email_data["id"] = email_id
-
-    try:
-        result = llm_parser.parse_email(email_data)
-        storage.store_parsed_email(result)
-        storage.resolve_dead_letter(email_id)
-        email_client.mark_as_read(email_id)
-        return {
-            "success": True,
-            "emailId": email_id,
-            "opportunities": len(result.opportunities),
-            "classification": result.classification,
-        }
-    except Exception as exc:
-        storage.increment_dead_letter_retry(email_id, str(exc))
-        return JSONResponse(
-            {"success": False, "emailId": email_id, "error": str(exc)},
-            status_code=422,
-        )
-
-
 @app.post("/api/score")
 async def score_opportunities(request: Request):
     if not _SCORING_OK:

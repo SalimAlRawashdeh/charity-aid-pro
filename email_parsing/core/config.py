@@ -23,12 +23,10 @@ AZURE_OPENAI_DEPLOYMENT_FULL: str = os.environ.get("AZURE_OPENAI_DEPLOYMENT_FULL
 # Confidence threshold below which the parser escalates to the full model (0.0–1.0)
 CONFIDENCE_THRESHOLD: float = float(os.environ.get("CONFIDENCE_THRESHOLD", "0.7"))
 
-# ── Cosmos DB ──────────────────────────────────────────────────────────────────
+# ── Supabase ──────────────────────────────────────────────────────────────────
 
-COSMOS_ENDPOINT: str = os.environ.get("COSMOS_ENDPOINT", "")
-COSMOS_KEY: str = os.environ.get("COSMOS_KEY", "")
-COSMOS_DATABASE: str = os.environ.get("COSMOS_DATABASE", "email-parser")
-COSMOS_CONTAINER: str = os.environ.get("COSMOS_CONTAINER", "opportunities")
+SUPABASE_URL: str = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY: str = os.environ.get("SUPABASE_KEY", "")
 
 
 def validate() -> list[str]:
@@ -40,7 +38,7 @@ def validate() -> list[str]:
         "GRAPH_USER_EMAIL": GRAPH_USER_EMAIL,
         "AZURE_OPENAI_ENDPOINT": AZURE_OPENAI_ENDPOINT,
         "AZURE_OPENAI_KEY": AZURE_OPENAI_KEY,
-        "COSMOS_ENDPOINT": COSMOS_ENDPOINT,
-        "COSMOS_KEY": COSMOS_KEY,
+        "SUPABASE_URL": SUPABASE_URL,
+        "SUPABASE_KEY": SUPABASE_KEY,
     }
     return [name for name, value in required.items() if not value]
