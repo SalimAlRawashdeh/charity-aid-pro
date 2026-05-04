@@ -5,13 +5,13 @@ import { mockActiveFunding, type ActiveFunding } from '@/lib/mock-data';
 function mapRow(row: Record<string, unknown>): ActiveFunding {
   return {
     id: String(row.id ?? ''),
-    funderName: String(row.funderName ?? row.funder_name ?? ''),
-    programName: String(row.programName ?? row.program_name ?? ''),
+    funderName: String(row.funder_name ?? ''),
+    programName: String(row.program_name ?? ''),
     amount: Number(row.amount ?? 0),
-    startDate: String(row.startDate ?? row.start_date ?? ''),
-    endDate: String(row.endDate ?? row.end_date ?? ''),
+    startDate: '',           // not in schema, default to empty
+    endDate: String(row.deadline ?? ''),  // closest equivalent
     type: (row.type as ActiveFunding['type']) ?? 'grant',
-    renewalEligible: Boolean(row.renewalEligible ?? row.renewal_eligible ?? false),
+    renewalEligible: false,  // not in schema, default to false
     notes: String(row.notes ?? ''),
   };
 }
@@ -23,9 +23,9 @@ async function fetchActiveFunding(): Promise<{ data: ActiveFunding[]; source: 's
   }
 
   const { data, error } = await supabase
-    .from('active_funding')
+    .from('opportunities')
     .select('*')
-    .order('end_date', { ascending: true });
+    .order('deadline', { ascending: true });
 
   if (error) {
     console.warn('[useActiveFunding] Supabase query failed → using mock data:', error.message);
