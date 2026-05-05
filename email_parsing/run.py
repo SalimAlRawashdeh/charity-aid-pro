@@ -55,6 +55,12 @@ def process_email(email: dict, *, do_score: bool = True) -> ParsedEmail:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Pull, parse, score, and store funding emails.")
     ap.add_argument("--count", type=int, default=10, help="Number of recent emails to fetch.")
+    ap.add_argument(
+        "--unread-only",
+        action="store_true",
+        help="Only fetch unread Outlook emails (use with --mark-read for an "
+        "inbox-driven watermark that skips already-processed messages).",
+    )
     ap.add_argument("--mark-read", action="store_true", help="Mark processed emails as read in Outlook.")
     ap.add_argument("--no-store", action="store_true", help="Skip the Supabase upsert.")
     ap.add_argument("--no-score", action="store_true", help="Skip the scoring stage.")
@@ -80,8 +86,12 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
 
-    log.info("Fetching %d recent email(s) from Outlook…", args.count)
-    emails = outlook.fetch_recent(args.count)
+    log.info(
+        "Fetching %d recent %semail(s) from Outlook…",
+        args.count,
+        "unread " if args.unread_only else "",
+    )
+    emails = outlook.fetch_recent(args.count, unread_only=args.unread_only)
     log.info("Got %d email(s).", len(emails))
 
     parsed_payloads: list[dict] = []

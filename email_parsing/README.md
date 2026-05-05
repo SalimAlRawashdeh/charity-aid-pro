@@ -33,9 +33,9 @@ All settings come from env vars:
 
 | Var | Required | Notes |
 |---|---|---|
-| `LLM_API_KEY` | yes | Gemini, OpenAI, or any OpenAI-compatible provider |
-| `LLM_BASE_URL` | no | default `https://generativelanguage.googleapis.com/v1beta/openai/` |
-| `LLM_MODEL` | no | default `gemini-2.5-flash` |
+| `LLM_API_KEY` | yes | Groq, OpenAI, Gemini, or any OpenAI-compatible provider |
+| `LLM_BASE_URL` | no | default `https://api.groq.com/openai/v1` |
+| `LLM_MODEL` | no | default `llama-3.3-70b-versatile` |
 | `LLM_TIMEOUT_SECONDS` | no | default `60` |
 | `MSAL_CLIENT_ID` | no | default is the registered Entra app id |
 | `MSAL_CACHE_FILE` | no | path to MSAL token cache (default `<repo>/token_cache.bin`) |
@@ -72,7 +72,12 @@ python -m email_parsing.run --count 10           # parse + score + store
 python -m email_parsing.run --count 5 --no-store --output /tmp/parsed.json
 ```
 
-CLI flags: `--count N`, `--mark-read`, `--no-store`, `--no-score`, `--output PATH`.
+CLI flags: `--count N`, `--unread-only`, `--mark-read`, `--no-store`, `--no-score`, `--output PATH`.
+
+Pairing `--unread-only` with `--mark-read` gives a self-contained watermark:
+each run only sees emails that haven't been processed yet, with no external
+state required. Local manual runs leave both off by default so you can re-test
+without changing inbox state.
 
 ## Tests
 
@@ -86,11 +91,43 @@ bands, and the scoring pipeline. They do not hit the LLM, Outlook, or Supabase.
 
 ## GitHub Actions
 
-`.github/workflows/email-pipeline.yml` runs every 6 hours and uploads the
-parsed payload as a build artefact. Configure these secrets / vars on the repo:
+`.github/workflows/email-pipeline.yml` runs **daily at 09:00 UTC** (and on
+manual dispatch) and uploads the parsed payload as a build artefact. A
+`concurrency` lock prevents two pipeline runs from racing on the mailbox.
 
-- secrets: `LLM_API_KEY`, `MSAL_TOKEN_CACHE_B64`, `SUPABASE_URL`, `SUPABASE_KEY`
-- vars (optional): `LLM_BASE_URL`, `LLM_MODEL`, `MSAL_CLIENT_ID`
+The cron run uses `--unread-only --mark-read`, so each day picks up only
+emails that arrived (and weren't manually read) since the previous run. No
+external watermark or state table is needed: the inbox itself is the
+source of truth.
+
+The OpenAI SDK uses `max_retries=6` and honors the `Retry-After` header that
+Groq returns on 429s, so a single run can absorb multiple TPM-window resets
+without any failures bubbling up — no manual sleep padding is needed.
+
+### Repo configuration
+
+**Settings → Secrets and variables → Actions**
+
+Secrets (all required):
+
+| Name | Value |
+|---|---|
+| `LLM_API_KEY` | Groq API key (`gsk_…`) |
+| `MSAL_TOKEN_CACHE_B64` | output of `python -m email_parsing.outlook export-cache` (run locally once after `outlook auth`) |
+| `SUPABASE_URL` | `https://<project>.supabase.co` |
+| `SUPABASE_KEY` | Supabase service-role key |
+
+Variables (all optional — only set to override the baked-in defaults):
+
+| Name | Default | When to set |
+|---|---|---|
+| `LLM_BASE_URL` | `https://api.groq.com/openai/v1` | switch to OpenAI / Gemini OpenAI-compat / OpenRouter / Azure |
+| `LLM_MODEL` | `llama-3.3-70b-versatile` | use a different model on the same provider |
+| `MSAL_CLIENT_ID` | the registered Entra app id | only if you re-register the Microsoft Entra app |
+
+Once the four secrets are set, the workflow runs automatically every 6 hours
+and is also available via **Actions → Email parsing pipeline → Run workflow**
+for ad-hoc runs (with optional `count` and `mark_read` inputs).
 
 ## Scoring summary
 

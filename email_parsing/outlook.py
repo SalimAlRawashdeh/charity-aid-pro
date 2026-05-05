@@ -27,7 +27,10 @@ from . import config
 logger = logging.getLogger(__name__)
 
 _AUTHORITY = "https://login.microsoftonline.com/consumers"
-_SCOPES = ["Mail.Read"]
+# Mail.ReadWrite — needed to flip isRead=true on processed messages, which is
+# how the cron pipeline knows what's already been handled. Mail.Read alone
+# would cause mark_as_read to 403 and break the watermark.
+_SCOPES = ["Mail.ReadWrite"]
 _GRAPH_INBOX = "https://graph.microsoft.com/v1.0/me/mailFolders/Inbox/messages"
 
 _markitdown = MarkItDown()
@@ -109,14 +112,21 @@ def _html_to_markdown(html: str) -> str:
         return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html)).strip()
 
 
-def fetch_recent(count: int = 10) -> list[dict[str, Any]]:
-    """Fetch the most recent inbox messages, body converted to plain text."""
+def fetch_recent(count: int = 10, *, unread_only: bool = False) -> list[dict[str, Any]]:
+    """Fetch the most recent inbox messages, body converted to plain text.
+
+    When *unread_only* is True the Graph query is filtered to `isRead eq false`,
+    which — combined with `--mark-read` — gives the cron pipeline a reliable
+    "only new emails" behavior without any external watermark.
+    """
     token = get_access_token()
-    params = {
+    params: dict[str, Any] = {
         "$top": count,
         "$orderby": "receivedDateTime desc",
         "$select": "id,subject,from,receivedDateTime,body",
     }
+    if unread_only:
+        params["$filter"] = "isRead eq false"
     with httpx.Client(timeout=30) as client:
         resp = client.get(
             _GRAPH_INBOX,

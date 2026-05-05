@@ -43,7 +43,14 @@ def _load_prompt(name: str) -> str:
 def _client() -> OpenAI:
     if not config.LLM_API_KEY:
         raise LLMError("LLM_API_KEY is not set")
-    return OpenAI(base_url=config.LLM_BASE_URL, api_key=config.LLM_API_KEY)
+    # max_retries=6: Groq's 12k TPM window can lock us out for ~60s once we
+    # exceed it; the SDK honors the Retry-After header on 429, so a higher
+    # ceiling lets a single run absorb several window-resets without failing.
+    return OpenAI(
+        base_url=config.LLM_BASE_URL,
+        api_key=config.LLM_API_KEY,
+        max_retries=6,
+    )
 
 
 def _strip_fences(text: str) -> str:
