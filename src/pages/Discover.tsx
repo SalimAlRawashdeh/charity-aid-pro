@@ -17,16 +17,13 @@ import {
   Clock,
   ArrowUpDown,
   ExternalLink,
-  RefreshCw,
   Zap,
   Globe,
-  Calendar,
   FileText,
   Users,
   Loader2,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/DashboardLayout";
-import { toast } from "sonner";
 import { useOpportunities } from "@/hooks/useOpportunities";
 import {
   formatCurrency,
@@ -42,7 +39,6 @@ const Discover = () => {
   const [sortBy, setSortBy] = useState<string>("score");
   const [amountRange, setAmountRange] = useState([0, 300000]);
   const [showFilters, setShowFilters] = useState(false);
-  const [scanning, setScanning] = useState(false);
   const [selectedOpp, setSelectedOpp] = useState<FundingOpportunity | null>(null);
 
   const locations = useMemo(
@@ -97,15 +93,6 @@ const Discover = () => {
     return "text-muted-foreground";
   };
 
-  const handleScan = () => {
-    setScanning(true);
-    toast.info("Scanning for new opportunities...");
-    setTimeout(() => {
-      setScanning(false);
-      toast.success("Scan complete — no new opportunities found");
-    }, 2000);
-  };
-
   if (isLoading) {
     return (
       <DashboardLayout>
@@ -124,9 +111,6 @@ const Discover = () => {
             <h1 className="text-3xl font-bold tracking-tight">Discover</h1>
             <p className="text-muted-foreground mt-1">Funding opportunities ranked for you.</p>
           </div>
-          <Button variant="outline" className="gap-2 rounded-xl" onClick={handleScan} disabled={scanning}>
-            <RefreshCw className={`h-4 w-4 ${scanning ? "animate-spin" : ""}`} /> {scanning ? "Scanning..." : "Scan Now"}
-          </Button>
         </div>
 
         {/* Search */}
