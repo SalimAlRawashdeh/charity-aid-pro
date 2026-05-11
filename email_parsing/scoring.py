@@ -3,16 +3,15 @@
 Stages, in order, per opportunity:
 
 1. Gating
-   - extraction confidence (algorithmic)
-   - geography (LLM with keyword fallback)
+   - geography (LLM with keyword fallback) — pass/fail on Kent-area eligibility
    - eligibility (heuristic on description/eligibility text)
    Geography hard-fail short-circuits — no further scoring.
 
-2. Algorithmic + heuristic scores
-   - funding value, timing, geography modifier
+2. Heuristic scores
+   - funding value (internal, derived from amount)
    - eligibility / strategic_fit / effort / probability / strategic_value heuristics
 
-3. Weighted final score (0-100) and suggested tags.
+3. Weighted final score (0-100) and tag suggestions merged into opp.tags.
 
 The non-geography heuristics are deliberately keyword-based for now (Phase 1).
 Replace `_heuristic_scores` with a single LLM call to upgrade.
@@ -20,7 +19,6 @@ Replace `_heuristic_scores` with a single LLM call to upgrade.
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from datetime import date, datetime, timezone
@@ -35,11 +33,16 @@ logger = logging.getLogger(__name__)
 
 # ── Geography ────────────────────────────────────────────────────────────────
 
+# Locations whose grants are accessible to a Kent-based charity.
 KENT_AREAS = [
     "canterbury", "dover", "medway", "thanet", "swale", "gravesham",
     "dartford", "maidstone", "ashford", "folkestone", "tonbridge",
     "sevenoaks", "tunbridge wells", "shepway",
 ]
+GEO_PASS_TERMS = (
+    "kent", "south east", "southeast", "england", "uk", "united kingdom",
+    "britain", "nationwide", "national",
+)
 GEO_FAIL_TERMS = [
     "scotland", "wales", "northern ireland", "greater manchester",
     "liverpool", "birmingham", "yorkshire", "cornwall",
@@ -50,21 +53,15 @@ def _geography_keyword_fallback(location: str) -> dict[str, Any]:
     loc = (location or "").lower().strip()
 
     if any(t in loc for t in GEO_FAIL_TERMS):
-        return {"pass": False, "specificity": None, "reasoning": "Out-of-area keyword match"}
+        return {"pass": False, "reasoning": "Out-of-area keyword match"}
 
     if not loc or loc in {"unknown", "n/a", "not specified", "unspecified"}:
-        return {"pass": True, "specificity": "unknown", "reasoning": "Location unspecified"}
+        return {"pass": True, "reasoning": "Location unspecified — assumed eligible"}
 
-    if any(t in loc for t in KENT_AREAS) or "kent" in loc:
-        spec = "kent_only"
-    elif any(t in loc for t in ("south east", "southeast", "regional")):
-        spec = "uk_regional"
-    elif any(t in loc for t in ("nationwide", "national", "england", "uk")):
-        spec = "uk_wide"
-    else:
-        spec = "unknown"
+    if any(t in loc for t in KENT_AREAS) or any(t in loc for t in GEO_PASS_TERMS):
+        return {"pass": True, "reasoning": "Kent-eligible location"}
 
-    return {"pass": True, "specificity": spec, "reasoning": "Keyword match"}
+    return {"pass": True, "reasoning": "No exclusion match — assumed eligible"}
 
 
 def _geography_with_llm(location: str) -> dict[str, Any]:
@@ -75,32 +72,31 @@ Grant location/geographic scope: "{location}"
 Return JSON only:
 {{
   "pass": true | false,
-  "specificity": "kent_only" | "uk_regional" | "uk_wide" | "unknown" | null,
   "reasoning": "<one sentence>"
 }}
 
 Rules:
-- pass=true if Kent-based orgs are eligible OR location is unspecified.
+- pass=true if the location includes Kent (e.g. Kent, South East, England,
+  UK-wide, nationwide) OR if the location is unspecified.
 - pass=false ONLY when explicitly restricted to a region that excludes Kent
-  (Scotland, Wales, NI, West Midlands, etc.).
-- specificity=null only when pass=false.
+  (Scotland, Wales, Northern Ireland, West Midlands, etc.).
 """
     try:
         raw = _chat(prompt, stage="geography")
         data = _parse_json(raw, stage="geography")
         if not isinstance(data, dict) or "pass" not in data:
             raise LLMError("geography: missing 'pass'")
-        data.setdefault("specificity", "unknown")
         data.setdefault("reasoning", "")
-        return data
+        return {"pass": bool(data["pass"]), "reasoning": data["reasoning"]}
     except Exception as exc:
         logger.warning("Geography LLM call failed (%s) — using keyword fallback", exc)
         return _geography_keyword_fallback(location)
 
 
-# ── Algorithmic scores ───────────────────────────────────────────────────────
+# ── Internal score helpers ───────────────────────────────────────────────────
 
 def _funding_value_score(amount: float, amount_max: float | None) -> tuple[int, float]:
+    """Returns (internal_score, amount_used). Only amount_used is persisted."""
     value = amount_max if amount_max is not None else amount
     if value >= 30_000:
         return 10, value
@@ -113,34 +109,26 @@ def _funding_value_score(amount: float, amount_max: float | None) -> tuple[int, 
     return 3, value
 
 
-def _timing_score(deadline: str) -> tuple[int | None, int | None]:
-    """Returns (score, days_to_deadline). None if unknown or expired."""
+def _timing_score(deadline: str) -> int | None:
+    """Internal urgency score from the deadline. Returns None if unknown/expired."""
     if not deadline or deadline == "unknown":
-        return None, None
+        return None
     try:
         deadline_date = datetime.fromisoformat(deadline).date()
     except ValueError:
-        return None, None
+        return None
     days = (deadline_date - date.today()).days
     if days < 0:
-        return None, days
+        return None
     if days < 7:
-        return 10, days
+        return 10
     if days < 30:
-        return 8, days
+        return 8
     if days < 90:
-        return 6, days
+        return 6
     if days < 180:
-        return 4, days
-    return 2, days
-
-
-_GEO_MODIFIER = {
-    "kent_only": 1.10,
-    "uk_regional": 1.05,
-    "uk_wide": 1.00,
-    "unknown": 1.00,
-}
+        return 4
+    return 2
 
 
 # ── Heuristic scores (placeholder for full LLM scoring) ──────────────────────
@@ -155,7 +143,7 @@ ELIGIBILITY_KEYWORDS = (
 def _heuristic_scores(opp: FundingOpportunity) -> dict[str, dict[str, Any]]:
     text = f"{opp.description} {opp.eligibility}".lower()
     funder_type = opp.type
-    amount_max = opp.amountMax if opp.amountMax is not None else opp.amount
+    amount_max = opp.amount_max if opp.amount_max is not None else opp.amount
 
     hits = sum(1 for kw in ELIGIBILITY_KEYWORDS if kw in text)
     eligibility_pass = hits > 0
@@ -188,7 +176,7 @@ def _heuristic_scores(opp: FundingOpportunity) -> dict[str, dict[str, Any]]:
         probability = 1
 
     strategic_value = 3
-    if opp.duration == "multi-year" or opp.durationMonths >= 24:
+    if opp.duration_months >= 24:
         strategic_value += 3
     if any(s in text for s in ("partnership", "collaboration", "consortium")):
         strategic_value += 2
@@ -213,44 +201,33 @@ def _heuristic_scores(opp: FundingOpportunity) -> dict[str, dict[str, Any]]:
 
 def score_opportunity(opp: FundingOpportunity) -> FundingOpportunity:
     """Run gating + scoring on *opp*, mutate it in place, and return it."""
-    extraction_pass = opp.extractionConfidence >= 0.5
     geo = _geography_with_llm(opp.location)
     geo_pass: bool = bool(geo["pass"])
-    geo_specificity: str | None = geo.get("specificity")
 
     if not geo_pass:
         opp.gating = {
             "status": "failed",
-            "extraction_confidence": {"pass": extraction_pass},
             "eligibility": {"pass": False, "confidence": 0.0, "reasoning": "Skipped — geography hard fail"},
-            "geography": {"pass": False, "specificity": None, "reasoning": geo.get("reasoning", "")},
+            "geography": {"pass": False, "reasoning": geo.get("reasoning", "")},
         }
         opp.scored_at = datetime.now(timezone.utc)
         return opp
 
     heur = _heuristic_scores(opp)
     eligibility_pass = bool(heur["eligibility"]["pass"])
-    geo_unknown = geo_specificity in (None, "unknown")
-    any_failed = not (extraction_pass and eligibility_pass)
+    gating_status = "passed" if eligibility_pass else "needs_review"
 
-    if any_failed or geo_unknown:
-        gating_status = "needs_review"
-    else:
-        gating_status = "passed"
+    fv_score, fv_amount = _funding_value_score(opp.amount, opp.amount_max)
+    timing_score = _timing_score(opp.deadline)
 
-    fv_score, fv_amount = _funding_value_score(opp.amount, opp.amountMax)
-    timing_score, days_to_deadline = _timing_score(opp.deadline)
-    geo_modifier = _GEO_MODIFIER.get(geo_specificity or "unknown", 1.00)
-
-    sf_raw = heur["strategic_fit"]["score"]
-    sf_final = round(min(sf_raw * geo_modifier, 10), 2)
+    sf_score = heur["strategic_fit"]["score"]
     effort = heur["effort"]["score"]
     probability = heur["probability"]["score"]
     strategic_value = heur["strategic_value"]["score"]
 
     final_score = round(
         (
-            sf_final * 0.30
+            sf_score * 0.30
             + fv_score * 0.35
             + probability * 0.15
             + strategic_value * 0.15
@@ -263,34 +240,27 @@ def score_opportunity(opp: FundingOpportunity) -> FundingOpportunity:
     suggested: list[str] = []
     if effort >= 8 and (timing_score or 0) >= 8:
         suggested.append("Quick Win")
-    if opp.duration == "multi-year":
+    if opp.duration_months >= 24:
         suggested.append("Multi-Year")
-    if sf_final >= 8 and probability >= 7:
+    if sf_score >= 8 and probability >= 7:
         suggested.append("Strong Match")
     if fv_score >= 9:
         suggested.append("High Value")
 
     opp.gating = {
         "status": gating_status,
-        "extraction_confidence": {"pass": extraction_pass},
         "eligibility": heur["eligibility"],
-        "geography": {
-            "pass": True,
-            "specificity": geo_specificity,
-            "reasoning": geo.get("reasoning", ""),
-        },
+        "geography": {"pass": True, "reasoning": geo.get("reasoning", "")},
     }
     opp.scores = {
-        "strategic_fit": {"raw": sf_raw, "final": sf_final, "reasoning": heur["strategic_fit"]["reasoning"]},
-        "funding_value": {"score": fv_score, "amount_used": fv_amount},
+        "strategic_fit": {"score": sf_score, "reasoning": heur["strategic_fit"]["reasoning"]},
+        "funding_value": {"amount_used": fv_amount},
         "probability": heur["probability"],
         "effort": heur["effort"],
         "strategic_value": heur["strategic_value"],
     }
-    opp.timing = {"score": timing_score, "days_to_deadline": days_to_deadline}
     opp.final_score = final_score
     opp.score = final_score
-    opp.suggested_tags = suggested
     opp.tags = sorted(set(opp.tags + suggested))
     opp.scored_at = datetime.now(timezone.utc)
     return opp

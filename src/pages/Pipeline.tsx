@@ -14,7 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { GripVertical, Plus, MessageSquare, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
+import { GripVertical, Plus, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { toast } from "sonner";
 import { useOpportunities } from "@/hooks/useOpportunities";
@@ -85,9 +85,7 @@ const Pipeline = () => {
       type: newOpp.type,
       deadline: newOpp.deadline,
       location: "UK-wide",
-      duration: "single-year",
       durationMonths: 12,
-      relationship: "new",
       status: "identified",
       score: 50,
       tags: [],
@@ -95,7 +93,6 @@ const Pipeline = () => {
       eligibility: "",
       notes: "",
       website: "",
-      source: "Manual Entry",
     };
     setOpportunities((prev) => [...prev, opp]);
     setShowAddDialog(false);
@@ -220,12 +217,6 @@ const Pipeline = () => {
                                     {tag}
                                   </span>
                                 ))}
-                              </div>
-                            )}
-                            {opp.rejectionFeedback && col.id === "rejected" && (
-                              <div className="flex items-start gap-1.5 p-2 bg-destructive/5 rounded-lg text-xs text-muted-foreground ml-6">
-                                <MessageSquare className="h-3 w-3 mt-0.5 shrink-0" />
-                                <span className="line-clamp-2">{opp.rejectionFeedback}</span>
                               </div>
                             )}
                           </div>

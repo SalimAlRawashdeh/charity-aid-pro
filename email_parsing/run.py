@@ -40,14 +40,14 @@ def process_email(email: dict, *, do_score: bool = True) -> ParsedEmail:
         scoring.score_all(parse_result.opportunities)
 
     return ParsedEmail(
-        emailId=email["id"],
-        emailSubject=email.get("subject", ""),
-        emailFrom=email.get("from", ""),
-        emailReceivedAt=_parse_received(email.get("receivedDateTime", "")),
-        parsedAt=datetime.now(timezone.utc),
-        modelUsed=config.LLM_MODEL,
+        email_id=email["id"],
+        email_subject=email.get("subject", ""),
+        email_from=email.get("from", ""),
+        email_received_at=_parse_received(email.get("receivedDateTime", "")),
+        parsed_at=datetime.now(timezone.utc),
+        model_used=config.LLM_MODEL,
         classification=parse_result.classification,
-        classificationConfidence=parse_result.classificationConfidence,
+        classification_confidence=parse_result.classification_confidence,
         opportunities=parse_result.opportunities,
     )
 
@@ -114,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
         log.info("  classification=%s opportunities=%d", parsed.classification, n)
         for i, opp in enumerate(parsed.opportunities, 1):
             score = f"{opp.final_score:.1f}" if opp.final_score is not None else "n/a"
-            log.info("    [%d] %s — %s (score %s)", i, opp.funderName, opp.programName, score)
+            log.info("    [%d] %s — %s (score %s)", i, opp.funder_name, opp.program_name, score)
 
         if do_store:
             try:

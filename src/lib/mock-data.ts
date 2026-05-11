@@ -1,8 +1,7 @@
 export type FundingType = 'grant' | 'trust' | 'lottery' | 'corporate' | 'government';
 export type OpportunityStatus = 'identified' | 'researching' | 'applying' | 'submitted' | 'awarded' | 'rejected';
-export type RelationshipStatus = 'new' | 'previously-applied' | 'existing-funder' | 're-eligible';
 
-import type { GatingResult, ScoringBreakdown, TimingInfo } from './database.types';
+import type { GatingResult, ScoringBreakdown } from './database.types';
 
 export interface FundingOpportunity {
   id: string;
@@ -13,9 +12,7 @@ export interface FundingOpportunity {
   type: FundingType;
   deadline: string;
   location: string;
-  duration: 'single-year' | 'multi-year';
   durationMonths: number;
-  relationship?: RelationshipStatus;
   status: OpportunityStatus;
   score: number;
   tags: string[];
@@ -25,11 +22,8 @@ export interface FundingOpportunity {
   website: string;
   contactName?: string;
   contactEmail?: string;
-  source: string;
-  extractionConfidence?: number;
   gating?: GatingResult | null;
   scores?: ScoringBreakdown | null;
-  timing?: TimingInfo | null;
   scored_at?: string;
 }
 
@@ -95,14 +89,5 @@ export function getTypeColor(type: FundingType): string {
     case 'lottery': return 'bg-accent/20 text-accent-foreground';
     case 'corporate': return 'bg-muted text-muted-foreground';
     case 'government': return 'bg-primary/20 text-primary';
-  }
-}
-
-export function getRelationshipLabel(status: RelationshipStatus): string {
-  switch (status) {
-    case 'new': return 'New Funder';
-    case 'previously-applied': return 'Previously Applied';
-    case 'existing-funder': return 'Existing Funder';
-    case 're-eligible': return 'Re-eligible';
   }
 }

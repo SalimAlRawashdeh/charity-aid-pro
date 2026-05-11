@@ -8,34 +8,32 @@ Read the email below, decide whether it describes a real funding opportunity
 that is relevant to Music4Wellbeing, and if so extract every distinct
 opportunity mentioned.
 
-Return a JSON object only — no markdown fences, no commentary. Schema:
+Return a JSON object only — no markdown fences, no commentary. Use snake_case
+keys exactly as shown. Schema:
 
 {
   "classification": "FUNDING_OPPORTUNITY" | "NEWSLETTER" | "IRRELEVANT",
   "confidence": <float 0.0-1.0>,
   "opportunities": [
     {
-      "id":                   "<short slug, e.g. opp-<funderName-slug>-<YYYY>>",
-      "funderName":           "<funding organisation>",
-      "programName":          "<specific programme or fund>",
-      "amount":               <minimum or exact award in GBP, 0 if unknown>,
-      "amountMax":            <max amount or null>,
-      "type":                 "grant" | "trust" | "lottery" | "corporate" | "government",
-      "deadline":             "<ISO 8601 date or 'unknown'>",
-      "location":             "<geographic scope, 'unknown' if unstated>",
-      "duration":             "single-year" | "multi-year",
-      "durationMonths":       <integer months, 12 if unknown>,
-      "status":               "identified",
-      "score":                0,
-      "tags":                 [<zero or more of: "Quick Win","Multi-Year","Capital Cost","Previously Applied","Re-eligible">],
-      "description":          "<2-3 sentence description>",
-      "eligibility":          "<key eligibility criteria>",
-      "notes":                "<any other relevant notes or empty string>",
-      "website":              "<URL — REQUIRED: scan the full email body for any URL related to this opportunity; use the most specific link available (application page, funder website). Must not be empty string unless no URL exists anywhere in the email.>",
-      "contactName":          "<contact name or null>",
-      "contactEmail":         "<email address — REQUIRED: scan the full email body, headers, and signature for any email address. Must not be null unless no email address appears anywhere in the email.>",
-      "source":               "email:{{email_id}}",
-      "extractionConfidence": <float 0.0-1.0>
+      "id":              "<short slug, e.g. opp-<funder-slug>-<YYYY>>",
+      "funder_name":     "<funding organisation>",
+      "program_name":    "<specific programme or fund>",
+      "amount":          <minimum or exact award in GBP, 0 if unknown>,
+      "amount_max":      <max amount or null>,
+      "type":            "grant" | "trust" | "lottery" | "corporate" | "government",
+      "deadline":        "<ISO 8601 date or 'unknown'>",
+      "location":        "<geographic scope, 'unknown' if unstated>",
+      "duration_months": <integer months, 12 if unknown>,
+      "status":          "identified",
+      "score":           0,
+      "tags":            [<zero or more of: "Quick Win","Multi-Year","Capital Cost">],
+      "description":     "<2-3 sentence description>",
+      "eligibility":     "<key eligibility criteria>",
+      "notes":           "<any other relevant notes or empty string>",
+      "website":         "<URL — REQUIRED: scan the full email body for any URL related to this opportunity; use the most specific link available (application page, funder website). Must not be empty string unless no URL exists anywhere in the email.>",
+      "contact_name":    "<contact name or null>",
+      "contact_email":   "<email address — REQUIRED: scan the full email body, headers, and signature for any email address. Must not be null unless no email address appears anywhere in the email.>"
     }
   ]
 }
@@ -54,13 +52,11 @@ Rules:
 - Use IRRELEVANT for anything else (spam, admin, personal, or funding clearly
   unrelated to M4W's work). opportunities = [].
 - Only populate opportunities when classification = FUNDING_OPPORTUNITY.
-- For website and contactEmail: these almost always exist in a real funding
+- For website and contact_email: these almost always exist in a real funding
   email. Scan the entire email body carefully — check footers, signatures,
   "apply here" links, "for more information" sections, and any hyperlinked text.
-  Set extractionConfidence below 0.5 if neither could be found.
-- If other fields can't be determined, use the documented "unknown" / null / 0
-  default rather than fabricating data, and lower extractionConfidence
-  accordingly.
+- If a field can't be determined, use the documented "unknown" / null / 0
+  default rather than fabricating data.
 
 Email subject: {{subject}}
 

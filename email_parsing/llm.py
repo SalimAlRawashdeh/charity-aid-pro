@@ -90,13 +90,11 @@ def parse_email(email: dict[str, Any]) -> ParseResult:
     """Classify and extract opportunities from a single email in one LLM call."""
     subject = email.get("subject", "")
     body = (email.get("body") or "")[:8000]
-    email_id = email.get("id") or email.get("emailId", "")
 
     prompt = (
         _load_prompt("parse")
         .replace("{{subject}}", subject)
         .replace("{{body}}", body)
-        .replace("{{email_id}}", email_id)
     )
 
     raw = _chat(prompt, stage="parse")
@@ -120,6 +118,6 @@ def parse_email(email: dict[str, Any]) -> ParseResult:
 
     return ParseResult(
         classification=classification,
-        classificationConfidence=max(0.0, min(1.0, confidence)),
+        classification_confidence=max(0.0, min(1.0, confidence)),
         opportunities=opportunities,
     )

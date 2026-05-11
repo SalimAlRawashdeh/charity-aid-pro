@@ -1,5 +1,5 @@
 -- Funding opportunities schema
--- Mirrors email_parsing/core/schema.py::FundingOpportunity
+-- Mirrors email_parsing/schema.py::FundingOpportunity
 
 create type funding_type as enum (
   'grant', 'trust', 'lottery', 'corporate', 'government'
@@ -8,8 +8,6 @@ create type funding_type as enum (
 create type opportunity_status as enum (
   'identified', 'researching', 'applying', 'submitted', 'awarded', 'rejected'
 );
-
-create type duration_type as enum ('single-year', 'multi-year');
 
 create table opportunities (
   id text primary key,
@@ -21,7 +19,6 @@ create table opportunities (
   type         funding_type not null,
   deadline     text not null,
   location     text not null,
-  duration     duration_type not null,
   duration_months int not null,
   status       opportunity_status not null default 'identified',
   score        numeric(5, 2) not null default 0
@@ -33,18 +30,12 @@ create table opportunities (
   website      text not null,
   contact_name  text,
   contact_email text,
-  source       text not null,
 
-  extraction_confidence numeric(4, 3) not null default 0
-                 check (extraction_confidence between 0 and 1),
-
-  -- Scoring pipeline output (see email_parsing/scoring/models.py)
+  -- Scoring pipeline output
   gating          jsonb,
   scores          jsonb,
-  timing          jsonb,
   final_score     numeric(5, 2)
                     check (final_score is null or final_score between 0 and 100),
-  suggested_tags  text[] not null default '{}',
   scored_at       timestamptz,
 
   created_at timestamptz not null default now(),

@@ -12,21 +12,16 @@ function mapRow(row: Record<string, unknown>): FundingOpportunity {
     type: (row.type as FundingOpportunity['type']) ?? 'grant',
     deadline: String(row.deadline ?? ''),
     location: String(row.location ?? ''),
-    duration: (row.duration as FundingOpportunity['duration']) ?? 'single-year',
     durationMonths: Number(row.duration_months ?? 12),
-    relationship: (row.relationship as FundingOpportunity['relationship']) ?? 'new',
     status: (row.status as FundingOpportunity['status']) ?? 'identified',
     score: Number(row.final_score ?? row.score ?? 0),
-    tags: Array.isArray(row.suggested_tags) && (row.suggested_tags as string[]).length > 0
-      ? (row.suggested_tags as string[])
-      : Array.isArray(row.tags) ? (row.tags as string[]) : [],
+    tags: Array.isArray(row.tags) ? (row.tags as string[]) : [],
     description: String(row.description ?? ''),
     eligibility: String(row.eligibility ?? ''),
     notes: String(row.notes ?? ''),
     website: String(row.website ?? ''),
     contactName: row.contact_name != null ? String(row.contact_name) : undefined,
     contactEmail: row.contact_email != null ? String(row.contact_email) : undefined,
-    source: String(row.source ?? ''),
   };
 }
 

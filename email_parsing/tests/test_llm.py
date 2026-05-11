@@ -26,21 +26,18 @@ def test_parse_email_envelope(monkeypatch):
         "opportunities": [
             {
                 "id": "opp-1",
-                "funderName": "Foo",
-                "programName": "Bar",
+                "funder_name": "Foo",
+                "program_name": "Bar",
                 "amount": 1000,
-                "amountMax": 5000,
+                "amount_max": 5000,
                 "type": "trust",
                 "deadline": "2026-12-31",
                 "location": "UK",
-                "duration": "single-year",
-                "durationMonths": 12,
+                "duration_months": 12,
                 "status": "identified",
                 "description": "Test",
                 "eligibility": "Anyone",
                 "website": "https://example.com",
-                "source": "email:test",
-                "extractionConfidence": 0.85,
             }
         ],
     }
@@ -50,7 +47,7 @@ def test_parse_email_envelope(monkeypatch):
     result = llm.parse_email({"id": "test", "subject": "x", "body": "y"})
     assert result.classification == "FUNDING_OPPORTUNITY"
     assert len(result.opportunities) == 1
-    assert result.opportunities[0].funderName == "Foo"
+    assert result.opportunities[0].funder_name == "Foo"
 
 
 def test_parse_email_irrelevant_no_opps(monkeypatch):
