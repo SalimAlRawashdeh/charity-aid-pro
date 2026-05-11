@@ -14,25 +14,18 @@ import {
 import {
   Search,
   SlidersHorizontal,
-  Star,
   Clock,
   ArrowUpDown,
-  ExternalLink,
-  RefreshCw,
   Zap,
   Globe,
-  Calendar,
   FileText,
-  Users,
   Loader2,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/DashboardLayout";
-import { toast } from "sonner";
 import { useOpportunities } from "@/hooks/useOpportunities";
 import {
   formatCurrency,
   daysUntil,
-  getRelationshipLabel,
   type FundingOpportunity,
 } from "@/lib/mock-data";
 
@@ -40,13 +33,10 @@ const Discover = () => {
   const { data: allOpportunities = [], isLoading } = useOpportunities();
   const [searchTerm, setSearchTerm] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
-  const [durationFilter, setDurationFilter] = useState<string>("all");
-  const [relationshipFilter, setRelationshipFilter] = useState<string>("all");
   const [locationFilter, setLocationFilter] = useState<string>("all");
   const [sortBy, setSortBy] = useState<string>("score");
   const [amountRange, setAmountRange] = useState([0, 300000]);
   const [showFilters, setShowFilters] = useState(false);
-  const [scanning, setScanning] = useState(false);
   const [selectedOpp, setSelectedOpp] = useState<FundingOpportunity | null>(null);
 
   const locations = useMemo(
@@ -55,9 +45,7 @@ const Discover = () => {
   );
 
   const filtered = useMemo(() => {
-    let result = allOpportunities.filter(
-      (o) => o.status !== "awarded" && o.status !== "rejected"
-    );
+    let result = allOpportunities.filter((o) => o.status === "identified");
 
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
@@ -69,8 +57,6 @@ const Discover = () => {
       );
     }
     if (typeFilter !== "all") result = result.filter((o) => o.type === typeFilter);
-    if (durationFilter !== "all") result = result.filter((o) => o.duration === durationFilter);
-    if (relationshipFilter !== "all") result = result.filter((o) => o.relationship === relationshipFilter);
     if (locationFilter !== "all") result = result.filter((o) => o.location === locationFilter);
     result = result.filter((o) => o.amount >= amountRange[0] && (o.amountMax || o.amount) <= amountRange[1]);
 
@@ -84,14 +70,14 @@ const Discover = () => {
     });
 
     return result;
-  }, [allOpportunities, searchTerm, typeFilter, durationFilter, relationshipFilter, locationFilter, sortBy, amountRange]);
+  }, [allOpportunities, searchTerm, typeFilter, locationFilter, sortBy, amountRange]);
 
   const getTagStyle = (tag: string) => {
     switch (tag) {
       case "Multi-Year": return "bg-primary/10 text-primary border-primary/20";
       case "Quick Win": return "bg-success/10 text-success border-success/20";
-      case "Previously Applied": return "bg-accent/20 text-accent-foreground border-accent/30";
-      case "Re-eligible": return "bg-secondary/10 text-secondary border-secondary/20";
+      case "Strong Match": return "bg-accent/20 text-accent-foreground border-accent/30";
+      case "High Value": return "bg-secondary/10 text-secondary border-secondary/20";
       case "Capital Cost": return "bg-muted text-muted-foreground";
       default: return "";
     }
@@ -101,15 +87,6 @@ const Discover = () => {
     if (score >= 85) return "text-success";
     if (score >= 70) return "text-primary";
     return "text-muted-foreground";
-  };
-
-  const handleScan = () => {
-    setScanning(true);
-    toast.info("Scanning for new opportunities...");
-    setTimeout(() => {
-      setScanning(false);
-      toast.success("Scan complete — no new opportunities found");
-    }, 2000);
   };
 
   if (isLoading) {
@@ -130,9 +107,6 @@ const Discover = () => {
             <h1 className="text-3xl font-bold tracking-tight">Discover</h1>
             <p className="text-muted-foreground mt-1">Funding opportunities ranked for you.</p>
           </div>
-          <Button variant="outline" className="gap-2 rounded-xl" onClick={handleScan} disabled={scanning}>
-            <RefreshCw className={`h-4 w-4 ${scanning ? "animate-spin" : ""}`} /> {scanning ? "Scanning..." : "Scan Now"}
-          </Button>
         </div>
 
         {/* Search */}
@@ -170,7 +144,7 @@ const Discover = () => {
           {showFilters && (
             <Card className="rounded-xl">
               <CardContent className="p-4">
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                <div className="grid gap-4 md:grid-cols-2">
                   <div>
                     <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Type</label>
                     <Select value={typeFilter} onValueChange={setTypeFilter}>
@@ -182,30 +156,6 @@ const Discover = () => {
                         <SelectItem value="lottery">Lottery</SelectItem>
                         <SelectItem value="corporate">Corporate</SelectItem>
                         <SelectItem value="government">Government</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Duration</label>
-                    <Select value={durationFilter} onValueChange={setDurationFilter}>
-                      <SelectTrigger className="rounded-xl"><SelectValue placeholder="Any duration" /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">Any Duration</SelectItem>
-                        <SelectItem value="single-year">Single Year</SelectItem>
-                        <SelectItem value="multi-year">Multi-Year</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Relationship</label>
-                    <Select value={relationshipFilter} onValueChange={setRelationshipFilter}>
-                      <SelectTrigger className="rounded-xl"><SelectValue placeholder="Any" /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">Any Relationship</SelectItem>
-                        <SelectItem value="existing-funder">Existing Funder</SelectItem>
-                        <SelectItem value="previously-applied">Previously Applied</SelectItem>
-                        <SelectItem value="re-eligible">Re-eligible</SelectItem>
-                        <SelectItem value="new">New Funder</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -245,8 +195,8 @@ const Discover = () => {
                 <Search className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
                 <p className="text-muted-foreground">No opportunities match your filters.</p>
                 <Button variant="ghost" className="mt-2" onClick={() => {
-                  setSearchTerm(""); setTypeFilter("all"); setDurationFilter("all");
-                  setRelationshipFilter("all"); setLocationFilter("all"); setAmountRange([0, 300000]);
+                  setSearchTerm(""); setTypeFilter("all");
+                  setLocationFilter("all"); setAmountRange([0, 300000]);
                 }}>Clear all filters</Button>
               </CardContent>
             </Card>
@@ -288,13 +238,6 @@ const Discover = () => {
                   </div>
                 </div>
 
-                {selectedOpp.eligibility && (
-                  <div>
-                    <p className="text-xs font-medium text-muted-foreground mb-1 flex items-center gap-1"><Users className="h-3 w-3" /> Eligibility</p>
-                    <p className="text-sm">{selectedOpp.eligibility}</p>
-                  </div>
-                )}
-
                 {selectedOpp.notes && (
                   <div>
                     <p className="text-xs font-medium text-muted-foreground mb-1 flex items-center gap-1"><FileText className="h-3 w-3" /> Notes</p>
@@ -311,7 +254,6 @@ const Discover = () => {
                 )}
 
                 <div className="flex items-center gap-2 flex-wrap">
-                  <Badge variant="outline" className="rounded-full text-xs">{getRelationshipLabel(selectedOpp.relationship)}</Badge>
                   <Badge variant="outline" className="rounded-full text-xs">{selectedOpp.type}</Badge>
                   {selectedOpp.tags.map(tag => (
                     <Badge key={tag} variant="outline" className={`rounded-full text-xs ${getTagStyle(tag)}`}>{tag}</Badge>
@@ -344,16 +286,13 @@ function OpportunityCard({
   onDetails: () => void;
 }) {
   return (
-    <Card className="hover:shadow-md transition-shadow rounded-xl">
+    <Card className="hover:shadow-md transition-shadow rounded-xl cursor-pointer" onClick={onDetails}>
       <CardContent className="p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1 min-w-0 space-y-2">
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="font-semibold text-base">{opp.funderName}</h3>
-                {opp.relationship === "existing-funder" && (
-                  <Star className="h-4 w-4 text-accent fill-accent" />
-                )}
               </div>
               <p className="text-sm text-muted-foreground">{opp.programName}</p>
             </div>
@@ -367,9 +306,6 @@ function OpportunityCard({
               ))}
               <Badge variant="outline" className="text-xs rounded-full">
                 {opp.type.charAt(0).toUpperCase() + opp.type.slice(1)}
-              </Badge>
-              <Badge variant="outline" className="text-xs rounded-full">
-                {getRelationshipLabel(opp.relationship)}
               </Badge>
             </div>
           </div>
@@ -387,10 +323,7 @@ function OpportunityCard({
               <Clock className="h-3 w-3" />
               {daysUntil(opp.deadline)}d left
             </div>
-            <Button variant="ghost" size="sm" className="mt-1 h-7 text-xs gap-1" onClick={onDetails}>
-              <ExternalLink className="h-3 w-3" /> Details
-            </Button>
-          </div>
+            </div>
         </div>
       </CardContent>
     </Card>

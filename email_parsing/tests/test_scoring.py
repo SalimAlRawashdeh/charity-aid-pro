@@ -6,18 +6,20 @@ from email_parsing import scoring
 def test_geography_keyword_fallback_kent():
     result = scoring._geography_keyword_fallback("Kent")
     assert result["pass"] is True
-    assert result["specificity"] == "kent_only"
+
+
+def test_geography_keyword_fallback_uk_passes():
+    assert scoring._geography_keyword_fallback("UK-wide")["pass"] is True
+    assert scoring._geography_keyword_fallback("England")["pass"] is True
+    assert scoring._geography_keyword_fallback("South East")["pass"] is True
 
 
 def test_geography_keyword_fallback_scotland_fails():
-    result = scoring._geography_keyword_fallback("Scotland only")
-    assert result["pass"] is False
+    assert scoring._geography_keyword_fallback("Scotland only")["pass"] is False
 
 
-def test_geography_keyword_fallback_unknown():
-    result = scoring._geography_keyword_fallback("")
-    assert result["pass"] is True
-    assert result["specificity"] == "unknown"
+def test_geography_keyword_fallback_unknown_passes():
+    assert scoring._geography_keyword_fallback("")["pass"] is True
 
 
 def test_funding_value_bands():
@@ -47,6 +49,9 @@ def test_score_opportunity_passes(opportunity, monkeypatch):
     result = scoring.score_opportunity(opportunity)
     assert result.gating["status"] in ("passed", "needs_review")
     assert result.scores is not None
+    assert "funding_value" in result.scores
+    assert "amount_used" in result.scores["funding_value"]
+    assert "score" not in result.scores["funding_value"]
     assert result.final_score is not None
     assert 0 <= result.final_score <= 100
     assert result.scored_at is not None

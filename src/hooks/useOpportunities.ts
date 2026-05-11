@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabaseClient';
-import { mockOpportunities, type FundingOpportunity } from '@/lib/mock-data';
+import { type FundingOpportunity } from '@/lib/mock-data';
 
 function mapRow(row: Record<string, unknown>): FundingOpportunity {
   return {
@@ -12,31 +12,47 @@ function mapRow(row: Record<string, unknown>): FundingOpportunity {
     type: (row.type as FundingOpportunity['type']) ?? 'grant',
     deadline: String(row.deadline ?? ''),
     location: String(row.location ?? ''),
-    duration: (row.duration as FundingOpportunity['duration']) ?? 'single-year',
     durationMonths: Number(row.duration_months ?? 12),
-    relationship: (row.relationship as FundingOpportunity['relationship']) ?? 'new',
     status: (row.status as FundingOpportunity['status']) ?? 'identified',
     score: Number(row.final_score ?? row.score ?? 0),
-    tags: Array.isArray(row.suggested_tags) && (row.suggested_tags as string[]).length > 0
-      ? (row.suggested_tags as string[])
-      : Array.isArray(row.tags) ? (row.tags as string[]) : [],
+    tags: Array.isArray(row.tags) ? (row.tags as string[]) : [],
     description: String(row.description ?? ''),
-    eligibility: String(row.eligibility ?? ''),
     notes: String(row.notes ?? ''),
     website: String(row.website ?? ''),
     contactName: row.contact_name != null ? String(row.contact_name) : undefined,
     contactEmail: row.contact_email != null ? String(row.contact_email) : undefined,
-    rejectionFeedback: undefined, // not in schema
-    lastApplied: undefined,       // not in schema
-    source: String(row.source ?? ''),
+    expirationDate: row.expiration_date != null ? String(row.expiration_date) : undefined,
+    amountAwarded: row.amount_awarded != null ? Number(row.amount_awarded) : undefined,
+    dismissalReason: row.dismissal_reason != null ? String(row.dismissal_reason) : undefined,
+    reapplicationDate: row.reapplication_date != null ? String(row.reapplication_date) : undefined,
   };
 }
 
-async function fetchOpportunities(): Promise<{ data: FundingOpportunity[]; source: 'supabase' | 'mock' }> {
+async function reviveRejected(): Promise<void> {
+  if (!supabase) return;
+  const today = new Date().toISOString().slice(0, 10);
+  const { data, error } = await supabase
+    .from('opportunities')
+    .select('id')
+    .eq('status', 'rejected')
+    .not('reapplication_date', 'is', null)
+    .lte('reapplication_date', today);
+
+  if (error || !data || data.length === 0) return;
+  const ids = data.map((r) => r.id);
+  await supabase
+    .from('opportunities')
+    .update({ status: 'identified', reapplication_date: null, updated_at: new Date().toISOString() })
+    .in('id', ids);
+}
+
+async function fetchOpportunities(): Promise<FundingOpportunity[]> {
   if (!supabase) {
-    console.log('[useOpportunities] Supabase not configured → using mock data');
-    return { data: mockOpportunities, source: 'mock' };
+    console.warn('[useOpportunities] Supabase not configured');
+    return [];
   }
+
+  await reviveRejected();
 
   const { data, error } = await supabase
     .from('opportunities')
@@ -44,29 +60,17 @@ async function fetchOpportunities(): Promise<{ data: FundingOpportunity[]; sourc
     .order('final_score', { ascending: false, nullsFirst: false });
 
   if (error) {
-    console.warn('[useOpportunities] Supabase query failed → using mock data:', error.message);
-    return { data: mockOpportunities, source: 'mock' };
+    console.error('[useOpportunities] Supabase query failed:', error.message);
+    throw error;
   }
 
-  if (!data || data.length === 0) {
-    console.log('[useOpportunities] Supabase returned empty → using mock data');
-    return { data: mockOpportunities, source: 'mock' };
-  }
-
-  console.log(`[useOpportunities] ✅ Loaded ${data.length} opportunities from Supabase`);
-  return { data: data.map(mapRow), source: 'supabase' };
+  return (data ?? []).map(mapRow);
 }
 
 export function useOpportunities() {
-  const query = useQuery({
+  return useQuery({
     queryKey: ['opportunities'],
     queryFn: fetchOpportunities,
     staleTime: 1000 * 60 * 5,
   });
-
-  return {
-    ...query,
-    data: query.data?.data ?? [],
-    dataSource: query.data?.source ?? 'mock',
-  };
 }
