@@ -51,12 +51,14 @@ const emptyForm = {
   contactName: "",
   contactEmail: "",
   notes: "",
+  purpose: "",
+  financialYear: "",
 };
 
 type PendingMove = {
   opp: FundingOpportunity;
   fromStatus: OpportunityStatus;
-  toStatus: "awarded" | "rejected" | "dismissed";
+  toStatus: "awarded" | "rejected" | "dismissed" | "submitted";
 };
 
 const Pipeline = () => {
@@ -72,9 +74,10 @@ const Pipeline = () => {
   const [newOpp, setNewOpp] = useState(emptyForm);
 
   const [pendingMove, setPendingMove] = useState<PendingMove | null>(null);
-  const [awardedForm, setAwardedForm] = useState({ expirationDate: "", amountAwarded: "" });
-  const [rejectedForm, setRejectedForm] = useState({ reapplicationDate: "" });
+  const [awardedForm, setAwardedForm] = useState({ expirationDate: "", amountAwarded: "", tranches: "", dateFundingReceived: "" });
+  const [rejectedForm, setRejectedForm] = useState({ reapplicationDate: "", feedback: "" });
   const [dismissedForm, setDismissedForm] = useState({ dismissalReason: "" });
+  const [submittedForm, setSubmittedForm] = useState({ expectedResultsDate: "" });
 
   const handleDragStart = (id: string) => setDraggedId(id);
 
@@ -98,11 +101,12 @@ const Pipeline = () => {
     setDragOverCol(null);
     if (!moved || moved.status === targetStatus) return;
 
-    if (targetStatus === "awarded" || targetStatus === "rejected" || targetStatus === "dismissed") {
+    if (targetStatus === "awarded" || targetStatus === "rejected" || targetStatus === "dismissed" || targetStatus === "submitted") {
       setPendingMove({ opp: moved, fromStatus: moved.status, toStatus: targetStatus });
-      setAwardedForm({ expirationDate: "", amountAwarded: String(moved.amount || "") });
-      setRejectedForm({ reapplicationDate: "" });
+      setAwardedForm({ expirationDate: "", amountAwarded: String(moved.amount || ""), tranches: "", dateFundingReceived: "" });
+      setRejectedForm({ reapplicationDate: "", feedback: "" });
       setDismissedForm({ dismissalReason: "" });
+      setSubmittedForm({ expectedResultsDate: "" });
       // optimistic move into target column while dialog is open
       setOpportunities((prev) => prev.map((o) => (o.id === movedId ? { ...o, status: targetStatus } : o)));
       return;
@@ -138,6 +142,8 @@ const Pipeline = () => {
     const { error } = await persistStatus(pendingMove.opp.id, "awarded", {
       expiration_date: awardedForm.expirationDate,
       amount_awarded: amountAwarded,
+      ...(awardedForm.tranches ? { tranches: parseInt(awardedForm.tranches, 10) } : {}),
+      ...(awardedForm.dateFundingReceived ? { date_funding_received: awardedForm.dateFundingReceived } : {}),
     });
     setSubmitting(false);
     if (error) {
@@ -147,7 +153,14 @@ const Pipeline = () => {
     setOpportunities((prev) =>
       prev.map((o) =>
         o.id === pendingMove.opp.id
-          ? { ...o, status: "awarded", expirationDate: awardedForm.expirationDate, amountAwarded }
+          ? {
+              ...o,
+              status: "awarded",
+              expirationDate: awardedForm.expirationDate,
+              amountAwarded,
+              tranches: awardedForm.tranches ? parseInt(awardedForm.tranches, 10) : undefined,
+              dateFundingReceived: awardedForm.dateFundingReceived || undefined,
+            }
           : o
       )
     );
@@ -166,6 +179,7 @@ const Pipeline = () => {
     setSubmitting(true);
     const { error } = await persistStatus(pendingMove.opp.id, "rejected", {
       reapplication_date: rejectedForm.reapplicationDate,
+      ...(rejectedForm.feedback.trim() ? { feedback: rejectedForm.feedback.trim() } : {}),
     });
     setSubmitting(false);
     if (error) {
@@ -175,7 +189,7 @@ const Pipeline = () => {
     setOpportunities((prev) =>
       prev.map((o) =>
         o.id === pendingMove.opp.id
-          ? { ...o, status: "rejected", reapplicationDate: rejectedForm.reapplicationDate }
+          ? { ...o, status: "rejected", reapplicationDate: rejectedForm.reapplicationDate, feedback: rejectedForm.feedback.trim() || undefined }
           : o
       )
     );
@@ -209,6 +223,31 @@ const Pipeline = () => {
     queryClient.invalidateQueries({ queryKey: ["opportunities"] });
     setPendingMove(null);
     toast.success("Opportunity dismissed");
+  };
+
+  const submitSubmitted = async () => {
+    if (!pendingMove) return;
+    const today = new Date().toISOString().slice(0, 10);
+    setSubmitting(true);
+    const { error } = await persistStatus(pendingMove.opp.id, "submitted", {
+      submission_date: today,
+      ...(submittedForm.expectedResultsDate ? { expected_results_date: submittedForm.expectedResultsDate } : {}),
+    });
+    setSubmitting(false);
+    if (error) {
+      toast.error(`Failed: ${error.message}`);
+      return;
+    }
+    setOpportunities((prev) =>
+      prev.map((o) =>
+        o.id === pendingMove.opp.id
+          ? { ...o, status: "submitted", submissionDate: today, expectedResultsDate: submittedForm.expectedResultsDate || undefined }
+          : o
+      )
+    );
+    queryClient.invalidateQueries({ queryKey: ["opportunities"] });
+    setPendingMove(null);
+    toast.success("Marked as submitted");
   };
 
   const toggleCollapse = (colId: string) => {
@@ -258,6 +297,8 @@ const Pipeline = () => {
       contact_name: newOpp.contactName || null,
       contact_email: newOpp.contactEmail || null,
       notes: newOpp.notes,
+      purpose: newOpp.purpose || null,
+      financial_year: newOpp.financialYear || null,
     };
 
     setSubmitting(true);
@@ -412,6 +453,8 @@ const Pipeline = () => {
                                 <span className="text-muted-foreground">expires {opp.expirationDate}</span>
                               ) : opp.status === "rejected" && opp.reapplicationDate ? (
                                 <span className="text-muted-foreground">reapply {opp.reapplicationDate}</span>
+                              ) : opp.status === "submitted" && opp.expectedResultsDate ? (
+                                <span className="text-muted-foreground">results {opp.expectedResultsDate}</span>
                               ) : opp.status === "dismissed" ? null : (
                                 <span className="text-muted-foreground">{daysUntil(opp.deadline)}d left</span>
                               )}
@@ -610,6 +653,30 @@ const Pipeline = () => {
                 rows={2}
               />
             </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Purpose</Label>
+                <Select value={newOpp.purpose} onValueChange={(v) => setNewOpp((p) => ({ ...p, purpose: v }))}>
+                  <SelectTrigger className="rounded-xl"><SelectValue placeholder="Select…" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="project">Project</SelectItem>
+                    <SelectItem value="core">Core</SelectItem>
+                    <SelectItem value="unrestricted">Unrestricted</SelectItem>
+                    <SelectItem value="core_and_project">Core &amp; Project</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Financial Year</Label>
+                <Input
+                  placeholder="e.g. 2026-2027"
+                  value={newOpp.financialYear}
+                  onChange={(e) => setNewOpp((p) => ({ ...p, financialYear: e.target.value }))}
+                  className="rounded-xl"
+                />
+              </div>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowAddDialog(false)} className="rounded-xl" disabled={submitting}>Cancel</Button>
@@ -653,6 +720,27 @@ const Pipeline = () => {
                 className="rounded-xl"
               />
             </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Tranches</Label>
+                <Input
+                  type="number"
+                  placeholder="e.g. 1"
+                  value={awardedForm.tranches}
+                  onChange={(e) => setAwardedForm((p) => ({ ...p, tranches: e.target.value }))}
+                  className="rounded-xl"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Date Funding Received</Label>
+                <Input
+                  type="date"
+                  value={awardedForm.dateFundingReceived}
+                  onChange={(e) => setAwardedForm((p) => ({ ...p, dateFundingReceived: e.target.value }))}
+                  className="rounded-xl"
+                />
+              </div>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={cancelPendingMove} className="rounded-xl" disabled={submitting}>Cancel</Button>
@@ -681,14 +769,56 @@ const Pipeline = () => {
               <Input
                 type="date"
                 value={rejectedForm.reapplicationDate}
-                onChange={(e) => setRejectedForm({ reapplicationDate: e.target.value })}
+                onChange={(e) => setRejectedForm((p) => ({ ...p, reapplicationDate: e.target.value }))}
                 className="rounded-xl"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Funder Feedback</Label>
+              <Textarea
+                placeholder="Any feedback from the funder (optional)"
+                value={rejectedForm.feedback}
+                onChange={(e) => setRejectedForm((p) => ({ ...p, feedback: e.target.value }))}
+                className="rounded-xl"
+                rows={3}
               />
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={cancelPendingMove} className="rounded-xl" disabled={submitting}>Cancel</Button>
             <Button onClick={submitRejected} className="rounded-xl" disabled={submitting}>
+              {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Confirm"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Submitted Dialog */}
+      <Dialog
+        open={pendingMove?.toStatus === "submitted"}
+        onOpenChange={(open) => { if (!open) cancelPendingMove(); }}
+      >
+        <DialogContent className="rounded-xl">
+          <DialogHeader>
+            <DialogTitle>Mark as Submitted</DialogTitle>
+            <DialogDescription>
+              Submission date will be recorded as today. Optionally note when you expect a decision.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label>Expected Results Date</Label>
+              <Input
+                type="date"
+                value={submittedForm.expectedResultsDate}
+                onChange={(e) => setSubmittedForm({ expectedResultsDate: e.target.value })}
+                className="rounded-xl"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={cancelPendingMove} className="rounded-xl" disabled={submitting}>Cancel</Button>
+            <Button onClick={submitSubmitted} className="rounded-xl" disabled={submitting}>
               {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Confirm"}
             </Button>
           </DialogFooter>

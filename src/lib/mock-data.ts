@@ -28,6 +28,13 @@ export interface FundingOpportunity {
   gating?: GatingResult | null;
   scores?: ScoringBreakdown | null;
   scored_at?: string;
+  submissionDate?: string;
+  expectedResultsDate?: string;
+  dateFundingReceived?: string;
+  tranches?: number;
+  purpose?: string;
+  feedback?: string;
+  financialYear?: string;
 }
 
 export interface ActiveFunding {
@@ -40,6 +47,10 @@ export interface ActiveFunding {
   type: FundingType;
   renewalEligible: boolean;
   notes: string;
+  dateFundingReceived?: string;
+  tranches?: number;
+  purpose?: string;
+  financialYear?: string;
 }
 
 export interface FunderContact {

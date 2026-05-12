@@ -14,6 +14,10 @@ function mapRow(row: Record<string, unknown>): ActiveFunding {
     type: (row.type as ActiveFunding['type']) ?? 'grant',
     renewalEligible: false,
     notes: String(row.notes ?? ''),
+    dateFundingReceived: row.date_funding_received != null ? String(row.date_funding_received) : undefined,
+    tranches: row.tranches != null ? Number(row.tranches) : undefined,
+    purpose: row.purpose != null ? String(row.purpose) : undefined,
+    financialYear: row.financial_year != null ? String(row.financial_year) : undefined,
   };
 }
 
